@@ -3,6 +3,7 @@ using Azure.AI.Inference;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using System.Text;
+using ChatRole = Microsoft.Extensions.AI.ChatRole;
 
 var githubToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
 if (string.IsNullOrEmpty(githubToken))
@@ -11,21 +12,47 @@ if (string.IsNullOrEmpty(githubToken))
     githubToken = config["GITHUB_TOKEN"];
 }
 
-IChatClient client = new ChatCompletionsClient(
+IChatClient chatClient = new ChatCompletionsClient(
         endpoint: new Uri("https://models.github.ai/inference"),
         new AzureKeyCredential(githubToken))
-        .AsIChatClient("Phi-3.5-MoE-instruct");
+        .AsIChatClient("gpt-4.1-mini");
 
-// here we're building the prompt
-StringBuilder prompt = new StringBuilder();
-prompt.AppendLine("You will analyze the sentiment of the following product reviews. Each line is its own review. Output the sentiment of each review in a bulleted list and then provide a generate sentiment of all reviews. ");
-prompt.AppendLine("I bought this product and it's amazing. I love it!");
-prompt.AppendLine("This product is terrible. I hate it.");
-prompt.AppendLine("I'm not sure about this product. It's okay.");
-prompt.AppendLine("I found this product based on the other reviews. It worked for a bit, and then it didn't.");
+// Start the conversation with context for the AI model
+List<ChatMessage> chatHistory =
+    [
+        new ChatMessage(ChatRole.System, """
+            You are a friendly hiking enthusiast who helps people discover fun hikes in their area.
+            You introduce yourself when first saying hello.
+            When helping people out, you always ask them for this information
+            to inform the hiking recommendation you provide:
 
-// send the prompt to the model and wait for the text completion
-var response = await client.GetResponseAsync(prompt.ToString());
+            1. The location where they would like to hike
+            2. What hiking intensity they are looking for
 
-// display the response
-Console.WriteLine(response.Text);
+            You will then provide three suggestions for nearby hikes that vary in length
+            after you get that information. You will also share an interesting fact about
+            the local nature on the hikes when making a recommendation. At the end of your
+            response, ask if there is anything else you can help with.
+        """)
+    ];
+
+// Loop to get user input and stream AI response
+while (true)
+{
+    // Get user prompt and add to chat history
+    Console.WriteLine("Your prompt:");
+    string? userPrompt = Console.ReadLine();
+    chatHistory.Add(new ChatMessage(ChatRole.User, userPrompt));
+
+    // Stream the AI response and add to chat history
+    Console.WriteLine("AI Response:");
+    string response = "";
+    await foreach (ChatResponseUpdate item in
+        chatClient.GetStreamingResponseAsync(chatHistory))
+    {
+        Console.Write(item.Text);
+        response += item.Text;
+    }
+    chatHistory.Add(new ChatMessage(ChatRole.Assistant, response));
+    Console.WriteLine();
+}
